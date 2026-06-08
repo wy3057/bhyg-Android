@@ -1,0 +1,6 @@
+{
+  "name": "BHYG",
+  "description": "哔哩哔哩会员购抢票助手",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
