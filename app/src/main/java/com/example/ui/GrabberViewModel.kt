@@ -92,7 +92,6 @@ class GrabberViewModel(application: Application) : AndroidViewModel(application)
                 userMid = userProfile.optString("mid", "")
                 userAvatar = userProfile.optString("face", "")
                 addLog("检测到已登录账号: $username")
-                fetchBuyerList()
             } else {
                 isLoggedIn = false
                 username = ""
@@ -108,14 +107,14 @@ class GrabberViewModel(application: Application) : AndroidViewModel(application)
         qrPollJob?.cancel()
         qrLoginStatus = "正在生成..."
         viewModelScope.launch {
-            val qr = withContext(Dispatchers.IO) { session.generateQrCode() }
-            if (qr != null) {
+            try {
+                val qr = withContext(Dispatchers.IO) { session.generateQrCode() }
                 qrCodeUrl = qr.first
                 qrCodeKey = qr.second
                 qrLoginStatus = "请使用哔哩哔哩APP扫码"
                 startQrPolling()
-            } else {
-                qrLoginStatus = "二维码生成失败，请重试"
+            } catch (e: Exception) {
+                qrLoginStatus = "生成失败: ${e.message}"
             }
         }
     }
@@ -185,6 +184,7 @@ class GrabberViewModel(application: Application) : AndroidViewModel(application)
                     }
                 }
                 addLog("成功载入项目: $projectName")
+                fetchBuyerList(projectIdInput)
             } else {
                 projectName = ""
                 addLog("载入项目信息失败，请检查ProjectId是否正确")
@@ -207,9 +207,10 @@ class GrabberViewModel(application: Application) : AndroidViewModel(application)
         }
     }
 
-    private fun fetchBuyerList() {
+    private fun fetchBuyerList(projectId: String) {
+        if (projectId.isEmpty()) return
         viewModelScope.launch {
-            val list = withContext(Dispatchers.IO) { session.getBuyerList() }
+            val list = withContext(Dispatchers.IO) { session.getBuyerList(projectId) }
             userBuyers.clear()
             selectedBuyers.clear()
             if (list != null) {
@@ -287,85 +288,90 @@ class GrabberViewModel(application: Application) : AndroidViewModel(application)
                 }
                 
                 // 1. Prepare Step
-                val tokens = session.prepareToken(
-                    projectId = projectId,
-                    screenId = screenId,
-                    skuId = skuId,
-                    count = count,
-                    buyerInfo = buyerJsonString
-                )
-
-                if (tokens != null) {
-                    val (token, ptoken) = tokens
-                    withContext(Dispatchers.Main) {
-                        addLog("获取 Token 成功! 开始发起 createOrder 下单...")
-                    }
-
-                    // 2. Order V2 Checkout Step
-                    val orderResult = session.createOrder(
+                try {
+                    val tokens = session.prepareToken(
                         projectId = projectId,
                         screenId = screenId,
                         skuId = skuId,
-                        count = count,
-                        payMoney = totalPayCents,
-                        idBind = idBind,
-                        buyerJson = buyerJsonString,
-                        token = token,
-                        ptoken = ptoken,
-                        isHotProject = hotProj
+                        count = count
                     )
 
-                    val code = orderResult.optInt("code", -1)
-                    val message = orderResult.optString("message", "")
-                    
-                    if (code == 0) {
-                        val orderData = orderResult.optJSONObject("data")
-                        val orderId = orderData?.optString("orderId") ?: ""
-                        val orderToken = orderData?.optString("token") ?: ""
-                        
+                    if (tokens.first.isNotEmpty()) {
+                        val (token, ptoken) = tokens
                         withContext(Dispatchers.Main) {
-                            addLog("🎉 抢票创建成功！订单ID: $orderId")
-                            addLog("正在查询订单支付二维码...")
+                            addLog("获取 Token 成功! 开始发起 createOrder 下单...")
                         }
 
-                        // 3. Confirm Status pay param
-                        var codeUrl: String? = null
-                        for (statusCheck in 1..5) {
-                            delay(1000)
-                            val statusResult = session.getOrderStatus(orderId, orderToken, projectId)
-                            if (statusResult != null && statusResult.optInt("code", -1) == 0) {
-                                val statusData = statusResult.optJSONObject("data")
-                                val payParam = statusData?.optJSONObject("payParam")
-                                codeUrl = payParam?.optString("code_url")
-                                if (!codeUrl.isNullOrEmpty()) {
-                                    break
+                        // 2. Order V2 Checkout Step
+                        val orderResult = session.createOrder(
+                            projectId = projectId,
+                            screenId = screenId,
+                            skuId = skuId,
+                            count = count,
+                            payMoney = totalPayCents,
+                            idBind = idBind,
+                            buyerJson = buyerJsonString,
+                            token = token,
+                            ptoken = ptoken,
+                            isHotProject = hotProj
+                        )
+
+                        val code = if (orderResult.has("code")) orderResult.getInt("code") else orderResult.optInt("errno", -1)
+                        val message = orderResult.optString("message", orderResult.optString("msg", "Unknown error"))
+                        
+                        if (code == 0) {
+                            val orderData = orderResult.optJSONObject("data")
+                            val orderId = orderData?.optString("orderId") ?: ""
+                            val orderToken = orderData?.optString("token") ?: ""
+                            
+                            withContext(Dispatchers.Main) {
+                                addLog("🎉 抢票创建成功！订单ID: $orderId")
+                                addLog("正在查询订单支付二维码...")
+                            }
+
+                            // 3. Confirm Status pay param
+                            var codeUrl: String? = null
+                            for (statusCheck in 1..5) {
+                                delay(1000)
+                                val statusResult = session.getOrderStatus(orderId, orderToken, projectId)
+                                if (statusResult != null && statusResult.optInt("code", -1) == 0) {
+                                    val statusData = statusResult.optJSONObject("data")
+                                    val payParam = statusData?.optJSONObject("payParam")
+                                    codeUrl = payParam?.optString("code_url")
+                                    if (!codeUrl.isNullOrEmpty()) {
+                                        break
+                                    }
                                 }
                             }
-                        }
 
-                        if (!codeUrl.isNullOrEmpty()) {
-                            withContext(Dispatchers.Main) {
-                                isRunning = false
-                                payCodeUrl = codeUrl
-                                payOrderId = orderId
-                                showPayDialog = true
-                                addLog("✅ 票务已被锁定！请即时扫描二维码在手机上支付")
+                            if (!codeUrl.isNullOrEmpty()) {
+                                withContext(Dispatchers.Main) {
+                                    isRunning = false
+                                    payCodeUrl = codeUrl
+                                    payOrderId = orderId
+                                    showPayDialog = true
+                                    addLog("✅ 票务已被锁定！请即时扫描二维码在手机上支付")
+                                }
+                            } else {
+                                withContext(Dispatchers.Main) {
+                                    isRunning = false
+                                    addLog("⚠️ 下单成功，但获取支付二维码超时，请打开哔哩哔哩APP至\"我的订单\"尽快完成支付！")
+                                }
                             }
+                            break
                         } else {
                             withContext(Dispatchers.Main) {
-                                isRunning = false
-                                addLog("⚠️ 下单成功，但获取支付二维码超时，请打开哔哩哔哩APP至\"我的订单\"尽快完成支付！")
+                                addLog("❌ 下单失败: [$code] $message")
                             }
                         }
-                        break
                     } else {
                         withContext(Dispatchers.Main) {
-                            addLog("❌ 下单失败: [$code] $message")
+                            addLog("❌ 准备 Token 获取失败: token 为空")
                         }
                     }
-                } else {
+                } catch (e: Exception) {
                     withContext(Dispatchers.Main) {
-                        addLog("❌ 准备 Token 获取失败 (可能还未开售，或限制访问中)")
+                        addLog("❌ ${e.message}")
                     }
                 }
 

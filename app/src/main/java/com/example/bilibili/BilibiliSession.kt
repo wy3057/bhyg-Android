@@ -70,7 +70,7 @@ class BilibiliSession(private val context: Context) {
     }
 
     private fun ensureBuvidCookies(host: String) {
-        val domain = if (host.contains("bilibili.com")) ".bilibili.com" else host
+        val domain = if (host.contains("bilibili.com")) "bilibili.com" else host
         val path = "/"
         if (!cookieStore.containsKey("buvid3")) {
             cookieStore["buvid3"] = Cookie.Builder()
@@ -196,7 +196,7 @@ class BilibiliSession(private val context: Context) {
     }
 
     // Generate Bilibili Web Qr Code for scan login
-    fun generateQrCode(): Pair<String, String>? {
+    fun generateQrCode(): Pair<String, String> {
         val request = Request.Builder()
             .url("https://passport.bilibili.com/x/passport-login/web/qrcode/generate")
             .header("User-Agent", getBrowserUserAgent())
@@ -210,13 +210,16 @@ class BilibiliSession(private val context: Context) {
                     if (json.optInt("code", -1) == 0) {
                         val data = json.getJSONObject("data")
                         return Pair(data.getString("url"), data.getString("qrcode_key"))
+                    } else {
+                        throw Exception("API Error: ${json.optString("message", "Unknown")}")
                     }
+                } else {
+                    throw Exception("HTTP Request Failed: ${response.code}")
                 }
             }
         } catch (e: Exception) {
-            Log.e(tag, "Error generating qr code", e)
+            throw Exception("Network Error: ${e.message}", e)
         }
-        return null
     }
 
     // Poll QR scan result. Returns string code: "success", "wait_scan", "wait_confirm", "expired", "failed"
@@ -280,8 +283,8 @@ class BilibiliSession(private val context: Context) {
     }
 
     // Fetch User Added Buyers Profiles list
-    fun getBuyerList(): JSONArray? {
-        val url = "https://show.bilibili.com/api/ticket/buyer/list?nomask=1"
+    fun getBuyerList(projectId: String): JSONArray? {
+        val url = "https://show.bilibili.com/api/ticket/buyer/list?is_default&projectId=$projectId"
         val request = Request.Builder()
             .url(url)
             .header("User-Agent", getBrowserUserAgent())
@@ -291,8 +294,9 @@ class BilibiliSession(private val context: Context) {
             okHttpClient.newCall(request).execute().use { response ->
                 if (response.isSuccessful) {
                     val bodyStr = response.body?.string() ?: ""
+                    Log.d(tag, "getBuyerList response: $bodyStr")
                     val json = JSONObject(bodyStr)
-                    if (json.optInt("code", -1) == 0) {
+                    if (json.optInt("errno", -1) == 0 || json.optInt("code", -1) == 0) {
                         val data = json.getJSONObject("data")
                         return data.optJSONArray("list")
                     }
@@ -309,9 +313,8 @@ class BilibiliSession(private val context: Context) {
         projectId: String,
         screenId: String,
         skuId: String,
-        count: Int,
-        buyerInfo: String
-    ): Pair<String, String>? {
+        count: Int
+    ): Pair<String, String> {
         val url = "https://show.bilibili.com/api/ticket/order/prepare?project_id=$projectId"
         
         val jsonPayload = JSONObject()
@@ -320,12 +323,8 @@ class BilibiliSession(private val context: Context) {
         jsonPayload.put("order_type", 1)
         jsonPayload.put("count", count)
         jsonPayload.put("sku_id", skuId.toLong())
-        jsonPayload.put("buyer_info", buyerInfo)
         jsonPayload.put("token", TokenGenerator.generateCtoken())
-        jsonPayload.put("ignoreRequestLimit", true)
-        jsonPayload.put("ticket_agent", "")
         jsonPayload.put("newRisk", true)
-        jsonPayload.put("requestSource", "neul-next")
 
         val mediaType = "application/json; charset=utf-8".toMediaType()
         val body = jsonPayload.toString().toRequestBody(mediaType)
@@ -338,22 +337,21 @@ class BilibiliSession(private val context: Context) {
             .post(body)
             .build()
 
-        try {
-            okHttpClient.newCall(request).execute().use { response ->
-                val bodyStr = response.body?.string() ?: ""
-                Log.d(tag, "Prepare Resp: $bodyStr")
-                val json = JSONObject(bodyStr)
-                if (json.optInt("code", -1) == 0) {
-                    val data = json.getJSONObject("data")
-                    val token = data.optString("token", "")
-                    val ptoken = data.optString("ptoken", "").replace("=", "")
-                    return Pair(token, ptoken)
-                }
+        okHttpClient.newCall(request).execute().use { response ->
+            val bodyStr = response.body?.string() ?: ""
+            Log.d(tag, "Prepare Resp: $bodyStr")
+            val json = JSONObject(bodyStr)
+            val code = if (json.has("code")) json.getInt("code") else json.optInt("errno", -1)
+            if (code == 0) {
+                val data = json.getJSONObject("data")
+                val token = data.optString("token", "")
+                val ptoken = data.optString("ptoken", "").replace("=", "")
+                return Pair(token, ptoken)
+            } else {
+                val msg = json.optString("message", json.optString("msg", "Unknown"))
+                throw Exception("Prepare Token 失败: [$code] $msg")
             }
-        } catch (e: Exception) {
-            Log.e(tag, "Error preparing ticket ordering flow", e)
         }
-        return null
     }
 
     // Create ticket booking order
@@ -474,6 +472,6 @@ class BilibiliSession(private val context: Context) {
     }
 
     private fun getBrowserUserAgent(): String {
-        return "Mozilla/5.0 (Linux; Android 15; PKR110 Build/AP1A.240321.011; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/135.0.7049.50 Mobile Safari/537.36 BiliApp/8350200 mobi_app/android"
+        return "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
     }
 }

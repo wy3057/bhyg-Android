@@ -298,7 +298,7 @@ fun LoginTab(viewModel: GrabberViewModel) {
                 text = "系统状态: ${viewModel.qrLoginStatus}",
                 fontWeight = FontWeight.Bold,
                 fontSize = 16.sp,
-                color = if (viewModel.qrLoginStatus.contains("过期")) Color.Red else BiliPink
+                color = if (viewModel.qrLoginStatus.contains("过期") || viewModel.qrLoginStatus.contains("失败")) Color.Red else BiliPink
             )
             Spacer(modifier = Modifier.height(32.dp))
 
