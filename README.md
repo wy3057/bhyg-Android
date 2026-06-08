@@ -38,9 +38,9 @@
 
 <table>
   <tr>
-    <td align="center"><img src="./docs/images/login.png" width="260" alt="登录页" /></td>
-    <td align="center"><img src="./docs/images/config.png" width="260" alt="项目配置页" /></td>
-    <td align="center"><img src="./docs/images/console.png" width="260" alt="控制台页" /></td>
+    <td align="center"><img src="./.build-outputs/login.png" width="260" alt="登录页" /></td>
+    <td align="center"><img src="./.build-outputs/config.png" width="260" alt="项目配置页" /></td>
+    <td align="center"><img src="./.build-outputs/console.png" width="260" alt="控制台页" /></td>
   </tr>
   <tr>
     <td align="center"><strong>扫码登录</strong></td>
